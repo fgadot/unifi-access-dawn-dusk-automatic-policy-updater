@@ -219,6 +219,7 @@ If you share the host machine, protect Docker access to prevent others from read
 ---
 
 # VERSIONS
+1.3.0 - Migrated build to GitHub Actions for automated multi-arch (amd64 + arm64) Docker Hub publishing  
 1.2 - Update all 7 days of the week (today + next 6 days) on every run for resilience against downtime  
 1.1 - Fix persistent data, so if docker is deleted, a new one will use old data unless overwritten  
 1.0.1 - Initial commit
