@@ -1,0 +1,3 @@
+# This crontab runs at 1:00 everyday
+0 1 * * * /app/run.sh 2>&1
+
