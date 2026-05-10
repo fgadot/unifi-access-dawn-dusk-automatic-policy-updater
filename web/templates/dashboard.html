@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Dashboard &mdash; UniFi Access Dawn/Dusk{% endblock %}
+
+{% block content %}
+
+  {# ---------- Run-now action bar ---------- #}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h5 mb-0 text-muted">
+      <i class="bi bi-speedometer2 me-1"></i>Status
+    </h1>
+    <button id="runNowBtn" class="btn btn-primary" onclick="runNow()">
+      <i class="bi bi-play-fill me-1"></i>Run now
+    </button>
+  </div>
+
+  {# ---------- Status banner ---------- #}
+  {% if not status %}
+    <div class="alert alert-secondary d-flex" role="alert">
+      <i class="bi bi-clock-history me-2 fs-4"></i>
+      <div>
+        <strong>Awaiting first run.</strong>
+        Configuration is saved. Click &ldquo;Run now&rdquo; above, or wait for
+        the next scheduled tick.
+      </div>
+    </div>
+  {% elif status.status == "success" %}
+    <div class="alert alert-success" role="alert">
+      <div class="d-flex">
+        <i class="bi bi-check-circle-fill me-2 fs-4"></i>
+        <div>
+          <strong>Last run succeeded</strong>
+          <span class="text-muted small ms-1">at {{ status.ended_at }}</span>
+        </div>
+      </div>
+      <div class="mt-2 ps-4 ms-2">
+        Today's hours:
+        <span class="badge text-bg-light fs-6 me-1">
+          <i class="bi bi-sunrise me-1"></i>{{ status.today_dawn }}
+        </span>
+        <span class="badge text-bg-light fs-6">
+          <i class="bi bi-sunset me-1"></i>{{ status.today_dusk }}
+        </span>
+        <div class="small text-muted mt-1">
+          Updated <strong>{{ status.days_updated }}</strong> day(s) on policy
+          &ldquo;{{ status.policy }}&rdquo; (schedule: {{ status.schedule }})
+        </div>
+      </div>
+    </div>
+  {% elif status.status == "not_configured" %}
+    <div class="alert alert-warning d-flex" role="alert">
+      <i class="bi bi-info-circle-fill me-2 fs-4"></i>
+      <div>
+        <strong>Last run skipped</strong> &mdash; configuration was incomplete
+        at the time. Re-save below if any field needs correcting.
+      </div>
+    </div>
+  {% else %}
+    <div class="alert alert-danger" role="alert">
+      <div class="d-flex">
+        <i class="bi bi-exclamation-triangle-fill me-2 fs-4"></i>
+        <div>
+          <strong>Last run failed</strong>
+          <span class="text-muted small ms-1">at {{ status.ended_at }}</span>
+        </div>
+      </div>
+      <div class="mt-2 ps-4 ms-2 small font-monospace">{{ status.error }}</div>
+    </div>
+  {% endif %}
+
+  {# ---------- Current configuration ---------- #}
+  <div class="card mb-4">
+    <div class="card-header bg-white border-bottom">
+      <h2 class="h6 mb-0">
+        <i class="bi bi-gear me-1"></i>
+        Current Configuration
+      </h2>
+    </div>
+    <div class="card-body">
+      <dl class="row mb-0 small">
+        <dt class="col-sm-4 text-muted">UniFi Host</dt>
+        <dd class="col-sm-8"><code class="config-value">{{ config.UNIFI_HOST }}</code></dd>
+
+        <dt class="col-sm-4 text-muted">Policy Name</dt>
+        <dd class="col-sm-8"><code class="config-value">{{ config.POLICY_NAME }}</code></dd>
+
+        <dt class="col-sm-4 text-muted">Coordinates</dt>
+        <dd class="col-sm-8">
+          <code class="config-value">{{ config.LAT }}, {{ config.LNG }}</code>
+        </dd>
+
+        <dt class="col-sm-4 text-muted">Timezone</dt>
+        <dd class="col-sm-8"><code class="config-value">{{ config.TZ }}</code></dd>
+
+        <dt class="col-sm-4 text-muted">UniFi Token</dt>
+        <dd class="col-sm-8">
+          <code class="config-value">
+            &hellip;{{ config.UNIFI_TOKEN[-4:] if config.UNIFI_TOKEN else '' }}
+          </code>
+          <span class="text-muted small">(last 4 chars only)</span>
+        </dd>
+      </dl>
+    </div>
+    <div class="card-footer bg-white border-top">
+      <a href="{{ url_for('index') }}?edit=1" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-pencil me-1"></i>Edit
+      </a>
+      <a href="{{ url_for('logs') }}" class="btn btn-sm btn-outline-secondary"
+         target="_blank">
+        <i class="bi bi-file-text me-1"></i>Full logs
+      </a>
+      <a href="{{ url_for('status_json') }}" class="btn btn-sm btn-outline-secondary"
+         target="_blank">
+        <i class="bi bi-braces me-1"></i>Raw JSON
+      </a>
+    </div>
+  </div>
+
+  {# ---------- Recent activity ---------- #}
+  <div class="card">
+    <div class="card-header bg-white border-bottom">
+      <h2 class="h6 mb-0">
+        <i class="bi bi-terminal me-1"></i>
+        Recent Activity
+      </h2>
+    </div>
+    <div class="card-body">
+      <pre class="log mb-0">{{ log }}</pre>
+    </div>
+  </div>
+
+  <script>
+    async function runNow() {
+      const btn = document.getElementById('runNowBtn');
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Running...';
+
+      try {
+        await fetch('{{ url_for("run_now") }}', { method: 'POST' });
+      } catch (e) {
+        alert('Network error: ' + e.message);
+        btn.disabled = false;
+        btn.innerHTML = original;
+        return;
+      }
+      // Reload to render fresh status / logs regardless of success or failure
+      location.reload();
+    }
+  </script>
+{% endblock %}

@@ -6,6 +6,70 @@ set -euo pipefail
 # This ensures all 7 weekday slots are always current, so the schedule remains valid
 # even if the container is offline for several days.
 
+# ============================================================
+# Status / logging setup (added in v2.0 for web UI integration)
+# ============================================================
+LOG_DIR="${LOG_DIR:-/data/logs}"
+LOG_FILE="${LOG_FILE:-${LOG_DIR}/run.log}"
+STATUS_FILE="${STATUS_FILE:-/data/last_run.json}"
+mkdir -p "$LOG_DIR"
+
+# Rotate the log if it exceeds 1000 lines (keep last 800)
+if [[ -f "$LOG_FILE" ]] && [[ "$(wc -l < "$LOG_FILE")" -gt 1000 ]]; then
+  tail -n 800 "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
+fi
+
+# Mirror all stdout+stderr into the log file
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+# Status fields populated as the run progresses
+RUN_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_STATUS="failure"
+RUN_ERROR=""
+RUN_DAYS_UPDATED=0
+RUN_TODAY_DAWN=""
+RUN_TODAY_DUSK=""
+RUN_POLICY=""
+RUN_SCHEDULE=""
+
+write_status() {
+  local end_time
+  end_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  jq -n \
+    --arg     start  "$RUN_START" \
+    --arg     end    "$end_time" \
+    --arg     status "$RUN_STATUS" \
+    --arg     error  "$RUN_ERROR" \
+    --argjson days   "$RUN_DAYS_UPDATED" \
+    --arg     dawn   "$RUN_TODAY_DAWN" \
+    --arg     dusk   "$RUN_TODAY_DUSK" \
+    --arg     policy "$RUN_POLICY" \
+    --arg     sched  "$RUN_SCHEDULE" '
+    {
+      started_at:   $start,
+      ended_at:     $end,
+      status:       $status,
+      error:        $error,
+      days_updated: $days,
+      today_dawn:   $dawn,
+      today_dusk:   $dusk,
+      policy:       $policy,
+      schedule:     $sched
+    }' > "$STATUS_FILE"
+}
+
+on_error() {
+  local exit_code=$?
+  RUN_ERROR="Failed at line $LINENO (exit $exit_code): $BASH_COMMAND"
+}
+
+trap on_error ERR
+trap write_status EXIT
+
+echo "=== Run started at $RUN_START ==="
+
+
+
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1" >&2; exit 1; }; }
 need curl
@@ -21,12 +85,15 @@ if [[ -f "$CONFIG_FILE" ]]; then
   source "$CONFIG_FILE"
 fi
 
-: "${UNIFI_HOST:?Missing UNIFI_HOST}"
-: "${UNIFI_TOKEN:?Missing UNIFI_TOKEN}"
-: "${POLICY_NAME:?Missing POLICY_NAME}"
-: "${LAT:?Missing LAT}"
-: "${LNG:?Missing LNG}"
-: "${TZ:?Missing TZ}"
+for var in UNIFI_HOST UNIFI_TOKEN POLICY_NAME LAT LNG TZ; do
+  if [[ -z "${!var:-}" ]]; then
+    RUN_STATUS="not_configured"
+    RUN_ERROR="Configuration incomplete (missing ${var}). Open http://<host>:8080 to finish setup."
+    echo "$RUN_ERROR"
+    trap - ERR  # don't trip on_error during graceful exit
+    exit 0
+  fi
+done
 
 # ----------------------------
 # 1) Fetch dawn/dusk for today + next 6 days from Sun API
@@ -59,6 +126,10 @@ for offset in 0 1 2 3 4 5 6; do
   if [[ -z "${week_times[$weekday]:-}" ]]; then
     week_times[$weekday]="${dawn}|${dusk}"
     echo "  $target_date ($weekday): dawn=$dawn  dusk=$dusk"
+    if [[ "$offset" -eq 0 ]]; then
+      RUN_TODAY_DAWN="$dawn"
+      RUN_TODAY_DUSK="$dusk"
+    fi
   else
     echo "  $target_date ($weekday): skipped (already set from earlier this week)"
   fi
@@ -108,6 +179,7 @@ if [[ -z "${schedule_id:-}" ]]; then
 fi
 
 echo "Found policy '${POLICY_NAME}' id=${policy_id} schedule_id=${schedule_id}"
+RUN_POLICY="${POLICY_NAME}"
 
 # ----------------------------
 # 3) Fetch schedule details by ID
@@ -120,6 +192,7 @@ schedule_full="$(
 )"
 
 sched_name="$(jq -r '.data.name // empty' <<<"$schedule_full")"
+RUN_SCHEDULE="$sched_name"
 holiday_group_id="$(jq -r '.data.holiday_group_id // ""' <<<"$schedule_full")"
 holiday_schedule="$(jq -c '.data.holiday_schedule // []' <<<"$schedule_full")"
 
@@ -198,3 +271,7 @@ update_json="$(
 )"
 
 echo "$update_json" | jq .
+
+RUN_STATUS="success"
+RUN_DAYS_UPDATED="${#week_times[@]}"
+echo "=== Run finished successfully ==="

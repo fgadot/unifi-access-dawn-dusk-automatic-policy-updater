@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Setup &mdash; UniFi Access Dawn/Dusk{% endblock %}
+
+{% block content %}
+  <div class="card">
+    <div class="card-body p-4">
+      <h1 class="h4 mb-3">
+        <i class="bi bi-gear-fill text-primary me-1"></i>
+        Initial Setup
+      </h1>
+      <p class="text-muted">
+        Enter your UniFi controller details and location to start automatic
+        dawn/dusk scheduling.
+      </p>
+
+      {% if error %}
+        <div class="alert alert-danger d-flex align-items-center" role="alert">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>
+          <div>{{ error }}</div>
+        </div>
+      {% endif %}
+
+      <form action="{{ url_for('save') }}" method="post">
+
+        <div class="mb-3">
+          <label for="UNIFI_HOST" class="form-label fw-semibold">UniFi Console URL</label>
+          <input type="text" class="form-control" id="UNIFI_HOST" name="UNIFI_HOST"
+                 placeholder="https://192.168.1.1:12445"
+                 value="{{ config.UNIFI_HOST or '' }}" required>
+          <div class="form-text">
+            Include <code>https://</code> and the port (usually <code>:12445</code>).
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="UNIFI_TOKEN" class="form-label fw-semibold">UniFi API Token</label>
+          <div class="input-group">
+            <input type="password" class="form-control" id="UNIFI_TOKEN" name="UNIFI_TOKEN"
+                   placeholder="Long alphanumeric string"
+                   value="{{ config.UNIFI_TOKEN or '' }}" required>
+            <button type="button" id="testBtn" class="btn btn-outline-primary"
+                    onclick="testConnection()">
+              <i class="bi bi-wifi me-1"></i>Test &amp; Load
+            </button>
+          </div>
+          <div id="testResult" class="form-text">
+            Generated from <em>UniFi Access &gt; Settings &gt; Security &gt; Advanced</em>.
+            Click <strong>Test &amp; Load</strong> to verify and populate the policy list below.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="POLICY_NAME" class="form-label fw-semibold">Policy Name</label>
+
+          <!-- Default text input shown until "Test & Load" succeeds -->
+          <input type="text" class="form-control" id="policyInput" name="POLICY_NAME"
+                 placeholder="Swimming pool"
+                 value="{{ config.POLICY_NAME or '' }}" required>
+
+          <!-- Dropdown swapped in by JS after a successful test -->
+          <select class="form-select" id="policySelect" style="display: none;">
+          </select>
+
+          <div class="form-text">
+            Exact policy name as shown in UniFi Access. Will become a dropdown
+            after a successful connection test.
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label for="LAT" class="form-label fw-semibold">Latitude</label>
+            <input type="text" class="form-control" id="LAT" name="LAT"
+                   placeholder="27.26"
+                   value="{{ config.LAT or '' }}" required>
+          </div>
+          <div class="col-md-6 mb-3">
+            <label for="LNG" class="form-label fw-semibold">Longitude</label>
+            <input type="text" class="form-control" id="LNG" name="LNG"
+                   placeholder="-82.22"
+                   value="{{ config.LNG or '' }}" required>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="TZ" class="form-label fw-semibold">Timezone</label>
+          <input type="text" class="form-control" id="TZ" name="TZ"
+                 placeholder="America/New_York"
+                 value="{{ config.TZ or 'America/New_York' }}" required>
+          <div class="form-text">
+            IANA format. Examples: <code>America/New_York</code>,
+            <code>Europe/Paris</code>, <code>UTC</code>.
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary mt-2">
+          <i class="bi bi-save-fill me-1"></i>
+          Save Configuration
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    async function testConnection() {
+      const host = document.getElementById('UNIFI_HOST').value.trim();
+      const token = document.getElementById('UNIFI_TOKEN').value.trim();
+      const result = document.getElementById('testResult');
+      const btn = document.getElementById('testBtn');
+      const original = btn.innerHTML;
+
+      if (!host || !token) {
+        result.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Enter the UniFi URL and token first.</span>';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Testing...';
+      result.innerHTML = '<span class="text-muted">Contacting controller...</span>';
+
+      let data;
+      try {
+        const resp = await fetch('{{ url_for("policies") }}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ host, token })
+        });
+        data = await resp.json();
+      } catch (e) {
+        result.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Network error: ' + e.message + '</span>';
+        btn.disabled = false;
+        btn.innerHTML = original;
+        return;
+      }
+
+      if (!data.ok) {
+        result.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>' + data.error + '</span>';
+        btn.disabled = false;
+        btn.innerHTML = original;
+        return;
+      }
+
+      // Success: swap the text input for a dropdown of policies
+      const input = document.getElementById('policyInput');
+      const select = document.getElementById('policySelect');
+      const previousValue = input.value;
+
+      select.innerHTML = '';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = '-- Choose a policy --';
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      select.appendChild(placeholder);
+
+      data.policies.forEach(function (p) {
+        const opt = document.createElement('option');
+        opt.value = p.name;
+        opt.textContent = p.name;
+        if (p.name === previousValue) {
+          opt.selected = true;
+          placeholder.selected = false;
+        }
+        select.appendChild(opt);
+      });
+
+      // Move the `name` attribute from input to select so the form submits the dropdown
+      input.removeAttribute('name');
+      input.removeAttribute('required');
+      input.style.display = 'none';
+      select.setAttribute('name', 'POLICY_NAME');
+      select.style.display = '';
+
+      result.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Connected. Loaded ' + data.policies.length + ' polic' + (data.policies.length === 1 ? 'y' : 'ies') + '.</span>';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Reload';
+    }
+  </script>
+{% endblock %}
