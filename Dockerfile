@@ -11,6 +11,7 @@ FROM alpine:3.22
 # ---------------------------------------------------------------------------
 RUN apk add --no-cache \
       bash \
+      coreutils \
       curl \
       wget \
       jq \
